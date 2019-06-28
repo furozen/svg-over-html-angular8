@@ -6,5 +6,10 @@
   height: 500px;
   border: black 1px solid;
 
+}
 
+.testarea:before{
+ font-family: monospace;
+ font-size: 1em;
+ content: '|➚|✐|◯|▢|'; position: absolute; top: -2em;
 }
