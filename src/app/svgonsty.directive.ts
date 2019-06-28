@@ -1,6 +1,6 @@
 import {Directive, ElementRef, HostListener, Input, OnInit, Renderer2} from '@angular/core';
 
-interface ISvgCircle{
+interface ISvgFigure{
   attributes:{ [attr:string]:string|number }
 }
 
@@ -398,7 +398,7 @@ const recorderTestCommands = [
   {"type":"Circle","data":{"attributes":{"cx":"328","cy":"131","r":"71.69379331573968"}}}
 ];
 
-type TSVGElement = ISvgPath|ISvgCircle;
+type TSVGElement = ISvgPath|ISvgFigure;
 
 enum DrawCommandType {
   Path = 'Path',
@@ -561,7 +561,7 @@ class CircleDrawer extends AbstractDrawer {
     this.createNewPath({attributes:{cx:x,cy:y,r:1, ...defaultPathTemplate.attributes}});
   }
 
-  createNewPath(template:ISvgCircle) {
+  createNewPath(template:ISvgFigure) {
     this.currentPath = this.renderer.createElement('circle', 'svg');
     const attributes = template.attributes;
     this.setAttributes(attributes);
@@ -586,8 +586,86 @@ class CircleDrawer extends AbstractDrawer {
 
   playCommand(command:IDrawCommand) {
 
-     this.createNewPath(command.data as ISvgCircle);
+     this.createNewPath(command.data as ISvgFigure);
 
+  }
+}
+
+class RectangleDrawer extends AbstractDrawer {
+
+  constructor(renderer:Renderer2, parent:SVGGraphicsElement){
+    super(renderer, parent);
+    this.drawMode = DrawMode.DrawSquare;
+    this.expectAttributes = ['x', 'y', 'width', 'height', ...this.expectAttributes];
+  }
+  private x:number;
+  private y:number;
+  private width:number;
+  private height:number;
+
+  getCommand(){
+    const command = new DrawCommand(this.parent);
+    command.el = this.currentPath;
+    command.setTypeByDrawMode(this.drawMode);
+    command.data = {attributes:{}};
+
+    let attributes = {};
+    this.expectAttributes.forEach(value => {
+      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
+      if (attr) {
+        attributes[value] = attr.value;
+      }
+    });
+
+    command.data.attributes = {...command.data.attributes, ...attributes};
+    return command;
+  }
+
+  startDrawing(x:number, y:number) {
+    this.x = x;
+    this.y = y;
+    this.width = 0;
+    this.height = 0;
+
+
+    this.createNewPath({attributes:{x:this.x,y:this.y,width:this.width,height:this.height, ...defaultPathTemplate.attributes}});
+  }
+
+  createNewPath(template:ISvgFigure) {
+    this.currentPath = this.renderer.createElement('rect', 'svg');
+    const attributes = template.attributes;
+    this.setAttributes(attributes);
+    this.renderer.appendChild(this.parent, this.currentPath);
+  }
+
+
+  private setAttributes(attributes:{ [attr:string]:string|number }) {
+    for (let attrb in attributes) {
+      this.renderer.setAttribute(this.currentPath, attrb, attributes[attrb].toString());
+    }
+  }
+
+  drawing(x:number, y:number) {
+    let cx = this.x;
+    let width = (x-this.x);
+    if(width<0){
+      cx+=width;
+      width*=-1;
+    }
+    console.log(`cx:${cx} width:${width}`);
+    let cy =  this.y;
+    let height = (y-cy);
+    if(height<0){
+      cy+=height;
+      height*=-1;
+    }
+
+
+    this.setAttributes({x:cx,y:cy, width,height})
+  }
+
+  playCommand(command:IDrawCommand) {
+     this.createNewPath(command.data as ISvgFigure);
   }
 }
 
@@ -693,6 +771,11 @@ export class SvgonstyDirective implements OnInit {
         this.drawer.startDrawing(ev.offsetX, ev.offsetY);
       }
       break;
+      case DrawMode.DrawSquare: {
+        this.drawer = new RectangleDrawer(this.renderer, this.svg);
+        this.drawer.startDrawing(ev.offsetX, ev.offsetY);
+      }
+      break;
     }
   }
 
@@ -736,6 +819,10 @@ export class SvgonstyDirective implements OnInit {
       break;
       case DrawCommandType.Circle:{
         this.drawer = new CircleDrawer(this.renderer,this.svg);
+      }
+      break;
+      case DrawCommandType.Square:{
+        this.drawer = new RectangleDrawer(this.renderer,this.svg);
       }
       break;
 
