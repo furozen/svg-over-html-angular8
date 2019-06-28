@@ -1,12 +1,16 @@
 import {Directive, ElementRef, HostListener, Input, OnInit, Renderer2} from '@angular/core';
 
+interface ISvgCircle{
+  attributes:{ [attr:string]:string|number }
+}
+
 interface ISvgPath {
   d:ISvgDPathItem[]
   attributes?:{ [attr:string]:string }
 }
 
 interface ISvgDPathItem {
-  t:'M' | 'l' | 'L'
+  t:'M' | 'l' | 'L' | string
   x:number;
   y:number;
 
@@ -21,7 +25,6 @@ enum DrawMode {
 }
 
 
-const SVGPathAttributes = ['fill', 'stroke', 'stroke-width'];
 
 const defaultPathTemplate:ISvgPath = {
   d:[],
@@ -391,10 +394,11 @@ const recorderTestCommands = [
       'y':21
     }, {'t':'L', 'x':29, 'y':22}], 'attributes':{'fill':'none', 'stroke':'#000', 'stroke-width':'1'}
   }
-}
+},
+  {"type":"Circle","data":{"attributes":{"cx":"328","cy":"131","r":"71.69379331573968"}}}
 ];
 
-type TSVGElement = ISvgPath;
+type TSVGElement = ISvgPath|ISvgCircle;
 
 enum DrawCommandType {
   Path = 'Path',
@@ -402,7 +406,12 @@ enum DrawCommandType {
   Square = 'Square'
 }
 
-class DrawCommand {
+interface IDrawCommand {
+  type:DrawCommandType|string;
+  data:TSVGElement;
+}
+
+class DrawCommand implements IDrawCommand {
   type:DrawCommandType;
   data:TSVGElement;
   el:SVGGraphicsElement;
@@ -425,7 +434,10 @@ class DrawCommand {
     switch (this.type) {
       case DrawCommandType.Path:
         return DrawMode.DrawPath;
-
+      case DrawCommandType.Circle:
+        return DrawMode.DrawCircle;
+      case DrawCommandType.Square:
+        return DrawMode.DrawSquare;
     }
   }
 
@@ -442,17 +454,24 @@ class DrawCommand {
 }
 
 
-class AbstractDrawer {
+abstract class AbstractDrawer {
   currentPath;
   drawMode:DrawMode;
-  path:ISvgPath = {
-    d:[]
-  };
+
+  protected expectAttributes = ['fill', 'stroke', 'stroke-width'];
 
   constructor(protected renderer:Renderer2, protected parent:SVGGraphicsElement) {}
+
+  abstract getCommand();
+  abstract startDrawing(x:number, y:number);
+  abstract drawing(x:number, y:number);
+  abstract playCommand(command:IDrawCommand);
 }
 
 class PathDrawer extends AbstractDrawer {
+  path:ISvgPath = {
+    d:[]
+  };
 
   constructor(renderer:Renderer2, parent:SVGGraphicsElement){
     super(renderer, parent);
@@ -466,7 +485,7 @@ class PathDrawer extends AbstractDrawer {
     command.data = JSON.parse(JSON.stringify(this.path));
 
     let attributes = {};
-    SVGPathAttributes.forEach(value => {
+    this.expectAttributes.forEach(value => {
       const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
       if (attr) {
         attributes[value] = attr.value;
@@ -477,15 +496,12 @@ class PathDrawer extends AbstractDrawer {
     return command;
   }
 
-
-  startDrawing(ev) {
-
-    this.path.d.push({t:'M', x:ev.offsetX, y:ev.offsetY});
+  startDrawing(x:number, y:number) {
+    this.path.d.push({t:'M', x: x, y: y});
     this.currentPath = this.createNewPath();
     this.updatePathD(this.path);
-
-
   }
+
   createNewPath(template:ISvgPath = defaultPathTemplate) {
     const path = this.renderer.createElement('path', 'svg');
     for (let attrb in template.attributes) {
@@ -501,6 +517,78 @@ class PathDrawer extends AbstractDrawer {
     }, '');
     this.renderer.setAttribute(this.currentPath, 'd', dElm);
   }
+
+  drawing(x:number, y:number) {
+    this.path.d.push({t:'L', x, y});
+    this.updatePathD(this.path);
+  }
+
+  playCommand(command:IDrawCommand) {
+    this.path = command.data as ISvgPath;
+    this.currentPath = this.createNewPath(this.path);
+    this.updatePathD(this.path);
+  }
+}
+
+
+class CircleDrawer extends AbstractDrawer {
+
+  constructor(renderer:Renderer2, parent:SVGGraphicsElement){
+    super(renderer, parent);
+    this.drawMode = DrawMode.DrawCircle;
+    this.expectAttributes = ['cx', 'cy','r',...this.expectAttributes];
+  }
+
+  getCommand(){
+    const command = new DrawCommand(this.parent);
+    command.el = this.currentPath;
+    command.setTypeByDrawMode(this.drawMode);
+    command.data = {attributes:{}};
+
+    let attributes = {};
+    this.expectAttributes.forEach(value => {
+      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
+      if (attr) {
+        attributes[value] = attr.value;
+      }
+    });
+
+    command.data.attributes = {...command.data.attributes, ...attributes};
+    return command;
+  }
+
+  startDrawing(x:number, y:number) {
+    this.createNewPath({attributes:{cx:x,cy:y,r:1, ...defaultPathTemplate.attributes}});
+  }
+
+  createNewPath(template:ISvgCircle) {
+    this.currentPath = this.renderer.createElement('circle', 'svg');
+    const attributes = template.attributes;
+    this.setAttributes(attributes);
+    this.renderer.appendChild(this.parent, this.currentPath);
+  }
+
+
+  private setAttributes(attributes:{ [attr:string]:string|number }) {
+    for (let attrb in attributes) {
+      this.renderer.setAttribute(this.currentPath, attrb, attributes[attrb].toString());
+    }
+  }
+
+  drawing(x:number, y:number) {
+    const cxAttr = (this.currentPath.attributes as NamedNodeMap).getNamedItem('cx');
+    const cx = parseFloat(cxAttr.value);
+    const cyAttr = (this.currentPath.attributes as NamedNodeMap).getNamedItem('cy');
+    const cy = parseFloat(cyAttr.value);
+    const r = Math.sqrt((x-cx)**2 +(y-cy)**2);
+    this.setAttributes({r})
+  }
+
+  playCommand(command:IDrawCommand) {
+
+     this.createNewPath(command.data as ISvgCircle);
+
+  }
 }
 
 
@@ -512,19 +600,14 @@ export class SvgonstyDirective implements OnInit {
   stack:DrawCommand[] = [];
   redo:DrawCommand[] = [];
 
-  path:ISvgPath = {
-    d:[]
-  };
-
   svg;
-
-  currentPath;
 
   drawMode:DrawMode = DrawMode.Pointer;
   toolDown:boolean = false;
 
   @Input() recordedCommands:DrawCommand[];
 
+  private drawer:AbstractDrawer;
   private fontWidth;
   private menuDrawMode:DrawMode[] = [DrawMode.Pointer,DrawMode.DrawPath,DrawMode.DrawCircle,DrawMode.DrawSquare];
 
@@ -532,9 +615,9 @@ export class SvgonstyDirective implements OnInit {
     //this.recordedCommands = recorderTestCommands;
   }
 
-   calcFontWidth(){
-     this.fontWidth = 20;
-   }
+  calcFontWidth(){
+   this.fontWidth = 20;
+  }
 
   ngOnInit() {
     let el = this.elementRef.nativeElement as HTMLElement;
@@ -555,28 +638,23 @@ export class SvgonstyDirective implements OnInit {
 
 
     (this.svg as HTMLElement).addEventListener('mousemove', ev => {
-
       if (this.drawMode !== DrawMode.Pointer && this.toolDown) {
         this.drawning(ev);
       }
     });
 
     (this.svg as HTMLElement).addEventListener('mousedown', ev => {
-      this.path.d = [];
-
       if (!this.toolDown && this.drawMode !== DrawMode.Pointer) {
         this.toolDown = true;
         this.startDrawing(ev);
       }
     });
 
-    (this.svg as HTMLElement).addEventListener('mouseup', ev => {
-      //console.log(`>>>>mouseup ${ev.offsetX}, ${ev.offsetY}`);
+    (this.svg as HTMLElement).addEventListener('mouseup', _ev => {
       if (this.drawMode !== DrawMode.Pointer && this.toolDown) {
         this.addToCommandStack();
         this.toolDown = false;
       }
-      this.path.d = [];
     });
 
     this.elementRef.nativeElement.addEventListener('keypress', ev => {
@@ -595,53 +673,31 @@ export class SvgonstyDirective implements OnInit {
       });
     }
 
-
-
     this.renderer.appendChild(this.svg, circle);
     this.renderer.appendChild(this.elementRef.nativeElement, this.svg);
   }
 
-
   private drawning(ev) {
-    switch (this.drawMode) {
-      case DrawMode.DrawPath:{
-        this.path.d.push({t:'L', x:ev.offsetX, y:ev.offsetY});
-        this.updatePathD(this.path);
-        break;
-      }
-
-    }
-
+    this.drawer.drawing(ev.offsetX, ev.offsetY);
   }
 
   private startDrawing(ev) {
     switch (this.drawMode) {
       case DrawMode.DrawPath: {
-        this.path.d.push({t:'M', x:ev.offsetX, y:ev.offsetY});
-        this.currentPath = this.createNewPath();
-        this.updatePathD(this.path);
+        this.drawer = new PathDrawer(this.renderer, this.svg);
+        this.drawer.startDrawing(ev.offsetX, ev.offsetY);
       }
       break;
-      case DrawMode.DrawCircle:
+      case DrawMode.DrawCircle: {
+        this.drawer = new CircleDrawer(this.renderer, this.svg);
+        this.drawer.startDrawing(ev.offsetX, ev.offsetY);
+      }
+      break;
     }
-
   }
 
   private addToCommandStack(resetRedo:boolean = true) {
-    const command = new DrawCommand(this.svg);
-    command.el = this.currentPath;
-    command.setTypeByDrawMode(this.drawMode);
-    command.data = JSON.parse(JSON.stringify(this.path));
-
-    let attributes = {};
-    SVGPathAttributes.forEach(value => {
-      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
-      if (attr) {
-        attributes[value] = attr.value;
-      }
-    });
-
-    command.data.attributes = {...command.data.attributes, ...attributes};
+    const command = this.drawer.getCommand();
     this.stack.push(command);
     if (resetRedo) {
       this.redo = [];
@@ -669,35 +725,24 @@ export class SvgonstyDirective implements OnInit {
       let offsetX = event.offsetX;
       let index = Math.floor(offsetX / this.fontWidth);
       this.drawMode = this.menuDrawMode[index];
-      console.log(this.drawMode);
     }
   }
 
+  private playCommand(command:IDrawCommand) {
+    switch (command.type) {
+      case DrawCommandType.Path:{
+        this.drawer = new PathDrawer(this.renderer,this.svg);
+      }
+      break;
+      case DrawCommandType.Circle:{
+        this.drawer = new CircleDrawer(this.renderer,this.svg);
+      }
+      break;
 
-  private playCommand(command) {
-    this.path = command.data;
-    this.currentPath = this.createNewPath(command.data, this.renderer, this.svg);
-    this.updatePathD(this.path);
+    }
+
+    this.drawer.playCommand(command);
     this.addToCommandStack(false);
   }
 
-  private createNewPath(template:ISvgPath = defaultPathTemplate, renderer = this.renderer, parent = this.svg) {
-    return this._createNewPath(template, renderer, parent);
-  }
-
-  private _createNewPath(template:ISvgPath, renderer, parent) {
-    const path = renderer.createElement('path', 'svg');
-    for (let attrb in template.attributes) {
-      renderer.setAttribute(path, attrb, template.attributes[attrb]);
-    }
-    renderer.appendChild(parent, path);
-    return path;
-  }
-
-  updatePathD(data:ISvgPath) {
-    let dElm = data.d.reduce((p, c) => {
-      return p += `${c.t}${c.x} ${c.y} `;
-    }, '');
-    this.renderer.setAttribute(this.currentPath, 'd', dElm);
-  }
 }
