@@ -31,7 +31,7 @@ const defaultPathTemplate:ISvgPath = {
   attributes:{
     fill:'none',
     stroke:'#000',
-    'stroke-width':'1'
+    'stroke-width':'2'
   }
 };
 
@@ -406,6 +406,35 @@ enum DrawCommandType {
   Square = 'Square'
 }
 
+
+interface IModifyCommand {
+  type:string;
+  command:DrawCommand
+}
+
+abstract class ModifyCommand implements IModifyCommand {
+  type = '';
+
+  constructor(public command:DrawCommand) {
+  }
+
+  abstract play();
+  //abstract undo();
+}
+
+class DeleteCommand extends ModifyCommand implements IModifyCommand{
+  type = 'Delete';
+
+  constructor(command:DrawCommand){
+    super(command);
+  }
+
+  play(){
+    this.command.remove();
+  }
+
+}
+
 interface IDrawCommand {
   type:DrawCommandType|string;
   data:TSVGElement;
@@ -455,7 +484,7 @@ class DrawCommand implements IDrawCommand {
 
 
 abstract class AbstractDrawer {
-  currentPath;
+  drawPath;
   drawMode:DrawMode;
 
   protected expectAttributes = ['fill', 'stroke', 'stroke-width'];
@@ -466,6 +495,7 @@ abstract class AbstractDrawer {
   abstract startDrawing(x:number, y:number);
   abstract drawing(x:number, y:number);
   abstract playCommand(command:IDrawCommand);
+
 }
 
 class PathDrawer extends AbstractDrawer {
@@ -480,13 +510,13 @@ class PathDrawer extends AbstractDrawer {
 
   getCommand(){
     const command = new DrawCommand(this.parent);
-    command.el = this.currentPath;
+    command.el = this.drawPath;
     command.setTypeByDrawMode(this.drawMode);
     command.data = JSON.parse(JSON.stringify(this.path));
 
     let attributes = {};
     this.expectAttributes.forEach(value => {
-      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
+      const attr = (this.drawPath.attributes as NamedNodeMap).getNamedItem(value);
       if (attr) {
         attributes[value] = attr.value;
       }
@@ -498,7 +528,7 @@ class PathDrawer extends AbstractDrawer {
 
   startDrawing(x:number, y:number) {
     this.path.d.push({t:'M', x: x, y: y});
-    this.currentPath = this.createNewPath();
+    this.drawPath = this.createNewPath();
     this.updatePathD(this.path);
   }
 
@@ -515,7 +545,7 @@ class PathDrawer extends AbstractDrawer {
     let dElm = data.d.reduce((p, c) => {
       return p += `${c.t}${c.x} ${c.y} `;
     }, '');
-    this.renderer.setAttribute(this.currentPath, 'd', dElm);
+    this.renderer.setAttribute(this.drawPath, 'd', dElm);
   }
 
   drawing(x:number, y:number) {
@@ -525,7 +555,7 @@ class PathDrawer extends AbstractDrawer {
 
   playCommand(command:IDrawCommand) {
     this.path = command.data as ISvgPath;
-    this.currentPath = this.createNewPath(this.path);
+    this.drawPath = this.createNewPath(this.path);
     this.updatePathD(this.path);
   }
 }
@@ -541,13 +571,13 @@ class CircleDrawer extends AbstractDrawer {
 
   getCommand(){
     const command = new DrawCommand(this.parent);
-    command.el = this.currentPath;
+    command.el = this.drawPath;
     command.setTypeByDrawMode(this.drawMode);
     command.data = {attributes:{}};
 
     let attributes = {};
     this.expectAttributes.forEach(value => {
-      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
+      const attr = (this.drawPath.attributes as NamedNodeMap).getNamedItem(value);
       if (attr) {
         attributes[value] = attr.value;
       }
@@ -562,23 +592,23 @@ class CircleDrawer extends AbstractDrawer {
   }
 
   createNewPath(template:ISvgFigure) {
-    this.currentPath = this.renderer.createElement('circle', 'svg');
+    this.drawPath = this.renderer.createElement('circle', 'svg');
     const attributes = template.attributes;
     this.setAttributes(attributes);
-    this.renderer.appendChild(this.parent, this.currentPath);
+    this.renderer.appendChild(this.parent, this.drawPath);
   }
 
 
   private setAttributes(attributes:{ [attr:string]:string|number }) {
     for (let attrb in attributes) {
-      this.renderer.setAttribute(this.currentPath, attrb, attributes[attrb].toString());
+      this.renderer.setAttribute(this.drawPath, attrb, attributes[attrb].toString());
     }
   }
 
   drawing(x:number, y:number) {
-    const cxAttr = (this.currentPath.attributes as NamedNodeMap).getNamedItem('cx');
+    const cxAttr = (this.drawPath.attributes as NamedNodeMap).getNamedItem('cx');
     const cx = parseFloat(cxAttr.value);
-    const cyAttr = (this.currentPath.attributes as NamedNodeMap).getNamedItem('cy');
+    const cyAttr = (this.drawPath.attributes as NamedNodeMap).getNamedItem('cy');
     const cy = parseFloat(cyAttr.value);
     const r = Math.sqrt((x-cx)**2 +(y-cy)**2);
     this.setAttributes({r})
@@ -605,13 +635,13 @@ class RectangleDrawer extends AbstractDrawer {
 
   getCommand(){
     const command = new DrawCommand(this.parent);
-    command.el = this.currentPath;
+    command.el = this.drawPath;
     command.setTypeByDrawMode(this.drawMode);
     command.data = {attributes:{}};
 
     let attributes = {};
     this.expectAttributes.forEach(value => {
-      const attr = (this.currentPath.attributes as NamedNodeMap).getNamedItem(value);
+      const attr = (this.drawPath.attributes as NamedNodeMap).getNamedItem(value);
       if (attr) {
         attributes[value] = attr.value;
       }
@@ -632,16 +662,16 @@ class RectangleDrawer extends AbstractDrawer {
   }
 
   createNewPath(template:ISvgFigure) {
-    this.currentPath = this.renderer.createElement('rect', 'svg');
+    this.drawPath = this.renderer.createElement('rect', 'svg');
     const attributes = template.attributes;
     this.setAttributes(attributes);
-    this.renderer.appendChild(this.parent, this.currentPath);
+    this.renderer.appendChild(this.parent, this.drawPath);
   }
 
 
   private setAttributes(attributes:{ [attr:string]:string|number }) {
     for (let attrb in attributes) {
-      this.renderer.setAttribute(this.currentPath, attrb, attributes[attrb].toString());
+      this.renderer.setAttribute(this.drawPath, attrb, attributes[attrb].toString());
     }
   }
 
@@ -675,13 +705,15 @@ class RectangleDrawer extends AbstractDrawer {
 })
 export class SvgonstyDirective implements OnInit {
 
-  stack:DrawCommand[] = [];
-  redo:DrawCommand[] = [];
+  stack:(DrawCommand|ModifyCommand)[] = [];
+  redo:(DrawCommand|ModifyCommand)[] = [];
 
   svg;
 
   drawMode:DrawMode = DrawMode.Pointer;
   toolDown:boolean = false;
+
+  selected:DrawCommand;
 
   @Input() recordedCommands:DrawCommand[];
 
@@ -738,7 +770,7 @@ export class SvgonstyDirective implements OnInit {
     this.elementRef.nativeElement.addEventListener('keypress', ev => {
       if (ev.key === 'Backspace') {
         const item = this.stack.pop();
-        if (item) {
+        if (item instanceof DrawCommand) {
           item.remove();
         }
         this.redo.push(item);
@@ -792,13 +824,23 @@ export class SvgonstyDirective implements OnInit {
     // console.log(event);
     if (event.code === 'Backspace') {
       const command = this.stack.pop();
-      if (command) {
+      if (command instanceof DrawCommand) {
         command.remove();
+      } else if (command instanceof ModifyCommand) {
+        this.playCommand(command.command);
       }
       this.redo.push(command);
     } else if (event.code === 'Space' && this.redo.length) {
       const command = this.redo.pop();
-      this.playCommand(command);
+      //TODO play delete command
+      if(command instanceof DrawCommand) {
+        this.playCommand(command);
+      }
+    } else if (event.code === 'Delete' && this.selected) {
+
+      let delCommand = new DeleteCommand(this.selected);
+      delCommand.play();
+      this.stack.push(delCommand);
     }
   }
 
@@ -808,6 +850,23 @@ export class SvgonstyDirective implements OnInit {
       let offsetX = event.offsetX;
       let index = Math.floor(offsetX / this.fontWidth);
       this.drawMode = this.menuDrawMode[index];
+    } else {
+
+      let command:DrawCommand =  this.stack.find((command) => {
+        return command instanceof DrawCommand && command.el === event.target;
+      }) as DrawCommand;
+      if(command){
+        console.log('event',event);
+        this.stack.forEach((command) =>{
+          if(command instanceof DrawCommand) {
+            command.el.classList.remove('selected');
+          }
+        });
+        this.selected = command;
+        command.el.classList.add( 'selected');
+      } else{
+        console.log('misclick to svg element' );
+      }
     }
   }
 
